@@ -7,115 +7,153 @@ import zipfile
 from utilities import utils, redisembeddings
 from utilities.formrecognizer import analyze_read
 from utilities.azureblobstorage import upload_file, get_all_files, upsert_blob_metadata
-from utilities.translator import translate
-from utilities.utils import add_embeddings, convert_file_and_add_embeddings
 import requests
 import mimetypes
 
-def embeddings():
-    embeddings = utils.chunk_and_embed(st.session_state['doc_text'])
-    # Store embeddings in Redis
-    redisembeddings.set_document(embeddings)
+def calcular_embeddings():
+    """
+    Calcula y almacena embeddings para el texto en sesión
+    """
+    embeddings = utils.chunk_and_embed(st.session_state['texto_documento'])
+    if embeddings:
+        # Almacenar embeddings en Redis
+        redisembeddings.set_document(embeddings)
+        st.success("Embeddings calculados y almacenados correctamente")
+        
+        # Mostrar conteo de tokens
+        token_len = utils.get_token_count(st.session_state['texto_documento'])
+        if token_len >= 3000:
+            st.warning(f'Tu texto tiene {token_len} tokens. Para una representación completa, considera reducirlo a menos de 3000 tokens')
+    else:
+        st.error("Error al calcular embeddings")
 
-    # Get token count
-    token_len = utils.get_token_count(st.session_state['doc_text'])
-    if token_len >= 3000:
-        st.warning(f'Your input text has {token_len} tokens. Please try reducing it (<= 3000) to get a full embeddings representation')
-
-
-def remote_convert_files_and_add_embeddings():
+def procesar_archivos_remotos():
+    """
+    Inicia el procesamiento remoto de archivos para conversión y embeddings
+    """
     response = requests.post(os.getenv('CONVERT_ADD_EMBEDDINGS_URL'))
     if response.status_code == 200:
-        st.success(f"{response.text}\nPlease note this is an asynchronous process and may take a few minutes to complete.")
+        st.success(f"{response.text}\nNota: Este proceso es asincrónico y puede tardar varios minutos en completarse.")
+    else:
+        st.error(f"Error al iniciar el proceso: {response.text}")
 
-def delete_row():
-    st.session_state['data_to_drop'] 
-    redisembeddings.delete_document(st.session_state['data_to_drop'])
-
-def token_count():
-    st.session_state['token_count'] = utils.get_token_count(st.session_state['doc_text'])
+def eliminar_documento():
+    """
+    Elimina un documento de la base de conocimientos
+    """
+    if 'documento_a_eliminar' in st.session_state:
+        redisembeddings.delete_document(st.session_state['documento_a_eliminar'])
+        st.success("Documento eliminado correctamente")
 
 try:
-    # Set page layout to wide screen and menu item
+    # Configurar página
     menu_items = {
-	'Get help': None,
-	'Report a bug': None,
-	'About': '''
-	 ## Embeddings App
-	 Embedding testing application.
-	'''
+        'Obtener ayuda': None,
+        'Reportar error': None,
+        'Acerca de': '''
+        ## Aplicación de Embeddings
+        Sistema de gestión de conocimientos con embeddings semánticos.
+        '''
     }
-    st.set_page_config(layout="wide", menu_items=menu_items)
+    st.set_page_config(
+        layout="wide", 
+        menu_items=menu_items,
+        page_title="Gestor de Conocimiento",
+        page_icon="🧠"
+    )
 
-    with st.expander("Add a single document to the knowledge base", expanded=True):
-        st.write("For heavy or long PDF, please use the 'Add documents in batch' option below.")
-        st.checkbox("Translate document to English", key="translate")
-        uploaded_file = st.file_uploader("Upload a document to add it to the knowledge base", type=['pdf','jpeg','jpg','png', 'txt'])
-        if uploaded_file is not None:
-            # To read file as bytes:
-            bytes_data = uploaded_file.getvalue()
+    # Sección 1: Añadir documento individual
+    with st.expander("Añadir un documento a la base de conocimientos", expanded=True):
+        st.info("Para documentos PDF grandes, usa la opción 'Añadir documentos en lote' más abajo.")
+        
+        archivo_subido = st.file_uploader(
+            "Sube un documento para añadirlo a la base de conocimientos", 
+            type=['pdf','jpeg','jpg','png', 'txt', 'docx', 'pptx']
+        )
+        
+        if archivo_subido is not None:
+            # Leer contenido del archivo
+            bytes_data = archivo_subido.getvalue()
+            nombre_archivo = archivo_subido.name
 
-            if st.session_state.get('filename', '') != uploaded_file.name:
-                # Upload a new file
-                st.session_state['filename'] = uploaded_file.name
-                content_type = mimetypes.MimeTypes().guess_type(uploaded_file.name)[0]
-                st.session_state['file_url'] = upload_file(bytes_data, st.session_state['filename'], content_type=content_type)
+            if st.session_state.get('nombre_archivo', '') != nombre_archivo:
+                # Subir nuevo archivo
+                st.session_state['nombre_archivo'] = nombre_archivo
+                tipo_contenido = mimetypes.MimeTypes().guess_type(nombre_archivo)[0]
+                url_archivo = upload_file(bytes_data, nombre_archivo, content_type=tipo_contenido)
 
-                if uploaded_file.name.endswith('.txt'):
-                    # Add the text to the embeddings
-                    add_embeddings(uploaded_file.read().decode('utf-8'), uploaded_file.name, os.getenv('OPENAI_EMBEDDINGS_ENGINE_DOC', 'text-embedding-ada-002'))
-
+                if nombre_archivo.endswith('.txt'):
+                    # Procesar directamente archivos de texto
+                    utils.add_embeddings(
+                        archivo_subido.read().decode('utf-8'), 
+                        nombre_archivo
+                    )
+                    st.success(f"Documento {nombre_archivo} añadido a la base de conocimientos.")
                 else:
-                    # Get OCR with Layout API
-                    convert_file_and_add_embeddings(st.session_state['file_url'], st.session_state['filename'], st.session_state['translate'])
-                
-                upsert_blob_metadata(uploaded_file.name, {'converted': 'true', 'embeddings_added': 'true'})
-                st.success(f"File {uploaded_file.name} embeddings added to the knowledge base.")
-            
-            # pdf_display = f'<iframe src="{st.session_state["file_url"]}" width="700" height="1000" type="application/pdf"></iframe>'
+                    # Procesar otros tipos de archivos
+                    if utils.convert_file_and_add_embeddings(url_archivo, nombre_archivo):
+                        st.success(f"Documento {nombre_archivo} procesado y añadido a la base de conocimientos.")
+                    else:
+                        st.error(f"Error al procesar el documento {nombre_archivo}")
 
-    with st.expander("Add text to the knowledge base", expanded=False):
+    # Sección 2: Añadir texto directo
+    with st.expander("Añadir texto a la base de conocimientos", expanded=False):
         col1, col2 = st.columns([3,1])
         with col1: 
-            st.session_state['doc_text'] = st.text_area("Add a new text content and the click on 'Compute Embeddings'", height=600)
-
+            st.text_area("Introduce texto y haz clic en 'Calcular Embeddings'", 
+                         height=300, key='texto_documento')
+        
         with col2:
-            st.session_state['embeddings_model'] = st.selectbox('Embeddings models', [utils.get_embeddings_model()['doc']], disabled=True)
-            st.button("Compute Embeddings", on_click=embeddings)
+            st.button("Calcular Embeddings", on_click=calcular_embeddings, 
+                      help="Genera embeddings semánticos para el texto introducido")
+            
+            # Mostrar modelo de embeddings
+            modelo_embeddings = utils.get_embeddings_model()['doc']
+            st.info(f"Modelo de embeddings: {modelo_embeddings}")
 
-    with st.expander("Add documents in Batch", expanded=False):
-        uploaded_files = st.file_uploader("Upload a document to add it to the Azure Storage Account", type=['pdf','jpeg','jpg','png', 'txt'], accept_multiple_files=True)
-        if uploaded_files is not None:
-            for up in uploaded_files:
-                # To read file as bytes:
-                bytes_data = up.getvalue()
+    # Sección 3: Procesamiento por lotes
+    with st.expander("Añadir documentos en Lote", expanded=False):
+        archivos_subidos = st.file_uploader(
+            "Sube múltiples documentos para añadirlos al almacenamiento", 
+            type=['pdf','jpeg','jpg','png', 'txt', 'docx', 'pptx'], 
+            accept_multiple_files=True
+        )
+        
+        if archivos_subidos:
+            for archivo in archivos_subidos:
+                bytes_data = archivo.getvalue()
+                nombre_archivo = archivo.name
+                tipo_contenido = mimetypes.MimeTypes().guess_type(nombre_archivo)[0]
+                upload_file(bytes_data, nombre_archivo, content_type=tipo_contenido)
+                st.success(f"Archivo {nombre_archivo} subido correctamente")
+        
+        st.button("Procesar todos los archivos", on_click=procesar_archivos_remotos,
+                  help="Inicia el procesamiento asincrónico de todos los archivos subidos")
 
-                if st.session_state.get('filename', '') != up.name:
-                    # Upload a new file
-                    st.session_state['filename'] = up.name
-                    content_type = mimetypes.MimeTypes().guess_type(up.name)[0]
-                    st.session_state['file_url'] = upload_file(bytes_data, st.session_state['filename'], content_type=content_type)
-                    if up.name.endswith('.txt'):
-                        # Add the text to the embeddings
-                        upsert_blob_metadata(up.name, {'converted': "true"})
-
-        st.button("Convert all files and add embeddings", on_click=remote_convert_files_and_add_embeddings)
-
-
-    with st.expander("View documents in the knowledge base", expanded=False):
-        # Query RediSearch to get all the embeddings
-        data = redisembeddings.get_documents()
-        if len(data) == 0:
-            st.warning("No embeddings found. Copy paste your data in the text input and click on 'Compute Embeddings'.")
+    # Sección 4: Gestión de documentos
+    with st.expander("Documentos en la Base de Conocimientos", expanded=False):
+        # Obtener documentos de Redis
+        documentos = redisembeddings.get_documents()
+        
+        if len(documentos) == 0:
+            st.info("No se encontraron documentos. Añade contenido usando las opciones superiores.")
         else:
-            data
-
+            # Mostrar tabla con documentos
+            df = pd.DataFrame(documentos)
+            st.dataframe(df[['filename', 'text']].head(1000), height=400)
+            
+            # Opción para eliminar documentos
+            documentos_lista = [doc['filename'] for doc in documentos]
+            seleccionado = st.selectbox("Seleccionar documento para eliminar", documentos_lista, key='documento_a_eliminar')
+            st.button("Eliminar documento seleccionado", on_click=eliminar_documento, 
+                      help="Elimina permanentemente el documento de la base de conocimientos")
 
 except URLError as e:
     st.error(
+        f"""
+        **Esta aplicación requiere acceso a internet.**
+        Error de conexión: {e.reason}
         """
-        **This demo requires internet access.**
-        Connection error: %s
-        """
-        % e.reason
     )
+except Exception as e:
+    st.error(f"Error inesperado: {str(e)}")

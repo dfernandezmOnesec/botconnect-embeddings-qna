@@ -1,70 +1,180 @@
 import streamlit as st
-from urllib.error import URLError
-import pandas as pd
 from utilities import utils
 import os
 
-def summarize():
-    _, response = utils.get_completion(get_prompt(), max_tokens=500, model=os.getenv('OPENAI_ENGINES', 'text-davinci-003'))
-    st.session_state['summary'] = response['choices'][0]['text'].encode().decode()
-
-def clear_summary():
-    st.session_state['summary'] = ""
-
-def get_prompt():
-    text = st.session_state['text']
-    if text is None or text == '':
-        text = '{}'
-    if summary_type == "Basic Summary":
-        prompt = "Summarize the following text:\n\n{}\n\nSummary:".format(text)
-    elif summary_type == "Bullet Points":
-        prompt = "Summarize the following text into bullet points:\n\n{}\n\nSummary:".format(text)
-    elif summary_type == "Explain it to a second grader":
-        prompt = "Explain the following text to a second grader:\n\n{}\n\nSummary:".format(text)
-
-    return prompt
-
-try:
-    # Set page layout to wide screen and menu item
-    menu_items = {
-    'Get help': None,
-    'Report a bug': None,
-    'About': '''
-     ## Embeddings App
-     Embedding testing application.
-    '''
+# Configuración de la página
+st.set_page_config(
+    page_title="Resumen de Documentos",
+    page_icon="📝",
+    layout="centered",
+    menu_items={
+        'Obtener ayuda': None,
+        'Reportar error': None,
+        'Acerca de': '''
+        ## Herramienta de Resumen de Texto
+        Genera resúmenes automáticos usando modelos avanzados de IA
+        '''
     }
-    st.set_page_config(layout="wide", menu_items=menu_items)
+)
 
-    st.markdown("## Summarization")
-    # radio buttons for summary type
-    summary_type = st.radio(
-        "Select a type of summarization",
-        ["Basic Summary", "Bullet Points", "Explain it to a second grader"],
-        key="visibility"
+# Estilos personalizados
+st.markdown("""
+<style>
+    .stApp {
+        max-width: 900px;
+        margin: 0 auto;
+    }
+    .header {
+        text-align: center;
+        padding: 20px 0;
+        border-bottom: 2px solid #4b6cb7;
+        margin-bottom: 30px;
+    }
+    .result-card {
+        background-color: #f0f4ff;
+        border-radius: 10px;
+        padding: 20px;
+        margin: 15px 0;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    }
+    .prompt-card {
+        background-color: #f8f9fa;
+        border-radius: 10px;
+        padding: 15px;
+        font-family: monospace;
+        font-size: 14px;
+        margin: 10px 0;
+    }
+    .stButton>button {
+        background-color: #4b6cb7;
+        color: white;
+        border-radius: 8px;
+        padding: 8px 20px;
+        transition: all 0.3s;
+    }
+    .stButton>button:hover {
+        background-color: #3a56a8;
+        transform: translateY(-2px);
+    }
+    .clear-btn {
+        background-color: #f8f9fa !important;
+        color: #333 !important;
+        border: 1px solid #ddd !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+def generar_resumen():
+    """Genera el resumen usando el modelo de IA"""
+    with st.spinner("Generando resumen..."):
+        try:
+            # Obtener modelo configurado
+            model = os.getenv('OPENAI_ENGINES', 'gpt-3.5-turbo-instruct')
+            
+            # Generar respuesta
+            _, response = utils.get_completion(
+                prompt=obtener_prompt(),
+                max_tokens=500,
+                model=model
+            )
+            
+            if response and 'choices' in response and len(response['choices']) > 0:
+                st.session_state['resumen'] = response['choices'][0]['text'].encode().decode()
+            else:
+                st.session_state['resumen'] = "❌ Error: No se recibió respuesta válida"
+                
+        except Exception as e:
+            st.session_state['resumen'] = f"❌ Error: {str(e)}"
+
+def limpiar_resumen():
+    """Borra el resumen de la sesión actual"""
+    st.session_state.pop('resumen', None)
+
+def obtener_prompt():
+    """Genera el prompt basado en el texto y tipo de resumen"""
+    texto = st.session_state.get('texto', '')
+    tipo_resumen = st.session_state.get('tipo_resumen', 'Resumen básico')
+    
+    if not texto:
+        return "Por favor ingresa algún texto para resumir"
+    
+    # Plantillas de prompts en español
+    prompts = {
+        "Resumen básico": f"Resume el siguiente texto de manera concisa:\n\n{texto}\n\nResumen:",
+        "Puntos clave": f"Extrae los puntos clave del siguiente texto en formato de lista con viñetas:\n\n{texto}\n\nPuntos clave:",
+        "Explicación sencilla": f"Explica el siguiente texto de manera simple, como si se lo estuvieras contando a un estudiante de secundaria:\n\n{texto}\n\nExplicación:",
+        "Resumen ejecutivo": f"Crea un resumen ejecutivo (máximo 100 palabras) del siguiente texto:\n\n{texto}\n\nResumen ejecutivo:",
+        "Análisis crítico": f"Realiza un análisis crítico del siguiente texto, destacando fortalezas y debilidades:\n\n{texto}\n\nAnálisis:"
+    }
+    
+    return prompts.get(tipo_resumen, prompts["Resumen básico"])
+
+# Título de la aplicación
+st.markdown('<div class="header"><h1>📝 Resumen de Documentos</h1><p>Genera resúmenes automáticos usando IA</p></div>', unsafe_allow_html=True)
+
+# Selector de tipo de resumen
+tipos_resumen = [
+    "Resumen básico",
+    "Puntos clave",
+    "Explicación sencilla",
+    "Resumen ejecutivo",
+    "Análisis crítico"
+]
+
+st.selectbox(
+    "Selecciona el tipo de resumen:",
+    options=tipos_resumen,
+    index=0,
+    key='tipo_resumen',
+    help="Elige cómo quieres que se genere el resumen"
+)
+
+# Área de texto para entrada
+st.text_area(
+    "Texto a resumir:",
+    height=250,
+    key='texto',
+    placeholder="Pega aquí el texto que deseas resumir...",
+    help="Ingresa cualquier texto que desees resumir o analizar"
+)
+
+# Botones de acción
+col1, col2 = st.columns(2)
+with col1:
+    st.button(
+        "✨ Generar Resumen", 
+        on_click=generar_resumen,
+        use_container_width=True
     )
-    # text area for user to input text
-    st.session_state['text'] = st.text_area(label="Enter some text to summarize",value='A neutron star is the collapsed core of a massive supergiant star, which had a total mass of between 10 and 25 solar masses, possibly more if the star was especially metal-rich.[1] Neutron stars are the smallest and densest stellar objects, excluding black holes and hypothetical white holes, quark stars, and strange stars.[2] Neutron stars have a radius on the order of 10 kilometres (6.2 mi) and a mass of about 1.4 solar masses.[3] They result from the supernova explosion of a massive star, combined with gravitational collapse, that compresses the core past white dwarf star density to that of atomic nuclei.', height=200)
-    st.button(label="Summarize", on_click=summarize)
-
-    # if summary doesn't exist in the state, make it an empty string
-    summary = ""
-    if 'summary' in st.session_state:
-        summary = st.session_state['summary']
-
-    # displaying the summary
-    st.text_area(label="Summary result", value=summary, height=200)
-    st.button(label="Clear summary", on_click=clear_summary)
-
-    # displaying the prompt that was used to generate the summary
-    st.text_area(label="Prompt",value=get_prompt(), height=400)
-    st.button(label="Summarize with updated prompt")
-
-except URLError as e:
-    st.error(
-        """
-        **This demo requires internet access.**
-        Connection error: %s
-        """
-        % e.reason
+with col2:
+    st.button(
+        "🧹 Limpiar Resultado", 
+        on_click=limpiar_resumen,
+        use_container_width=True,
+        type="secondary"
     )
+
+# Mostrar resultado
+if 'resumen' in st.session_state:
+    st.markdown("### Resultado del Resumen")
+    st.markdown(f'<div class="result-card">{st.session_state["resumen"]}</div>', unsafe_allow_html=True)
+
+# Mostrar el prompt utilizado
+st.markdown("### Prompt Utilizado")
+st.markdown(f'<div class="prompt-card">{obtener_prompt()}</div>', unsafe_allow_html=True)
+
+# Sección de información adicional
+with st.expander("💡 Consejos para mejores resultados"):
+    st.markdown("""
+    - **Textos largos**: Para documentos extensos (>1000 palabras), considera dividirlos en secciones
+    - **Especificidad**: Cuanto más específico sea tu texto, mejor será el resumen
+    - **Idioma**: La herramienta funciona mejor con textos en español
+    - **Personalización**: Si necesitas un formato específico, menciónalo en el texto
+    - **Verificación**: Siempre revisa los resultados, especialmente para contenido crítico
+    """)
+
+# Nota sobre modelos
+st.info("""
+**Nota:** Esta herramienta utiliza modelos de lenguaje avanzados de OpenAI. 
+El modelo actual es `gpt-3.5-turbo-instruct` (puede configurarse en variables de entorno).
+""")
